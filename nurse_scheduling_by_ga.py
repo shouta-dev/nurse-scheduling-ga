@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 import random
+from scoop import futures
 
 from deap import base
 from deap import creator
 from deap import tools
+from deap import cma
 
 # 従業員を表すクラス
 class Employee(object):
   def __init__(self, no, name, age, manager, wills):
     self.no = no
     self.name = name
+    self.age = age
     self.manager = manager
 
     # willは曜日_時間帯。1は朝、2は昼、3は夜。
@@ -47,6 +50,7 @@ class Shift(object):
       self.make_sample()
     else:
       self.list = list
+    self.employees = []
 
   # ランダムなデータを生成
   def make_sample(self):
@@ -82,6 +86,11 @@ class Shift(object):
   def print_csv(self):
     for line in self.slice():
       print ','.join(map(str, line))
+
+  # TSV形式でアサイン結果の出力をする
+  def print_tsv(self):
+    for line in self.slice():
+      print "\t".join(map(str, line))
 
   # ユーザ番号を指定してコマ名を取得する
   def get_boxes_by_user(self, user_no):
@@ -124,15 +133,53 @@ class Shift(object):
     return result
 
   # 応募していないコマにアサインされている件数を取得する
-  def not_applicated_assign(self, employees):
+  def not_applicated_assign(self):
     count = 0
     for box_name in self.SHIFT_BOXES:
       user_nos = self.get_user_nos_by_box_name(box_name)
       for user_no in user_nos:
-        e = employees[user_no]
+        e = self.employees[user_no]
         if not e.is_applicated(box_name):
           count += 1
     return count
+
+  # アサインが応募コマ数の50%に満たないユーザを取得
+  def few_work_user(self):
+    result = []
+    for user_no in range(10):
+      e = self.employees[user_no]
+      ratio = float(len(self.get_boxes_by_user(user_no))) / float(len(e.wills))
+      if ratio < 0.5:
+        result.append(e)
+    return result
+
+  # 管理者が1人もいないコマ
+  def no_manager_box(self):
+    result = []
+    for box_name in self.SHIFT_BOXES:
+      manager_included = False
+      user_nos = self.get_user_nos_by_box_name(box_name)
+      for user_no in user_nos:
+        e = self.employees[user_no]
+        if e.manager:
+          manager_included = True
+      if not manager_included:
+        result.append(box_name)
+    return result
+
+  # 1日1人3コマの日を返却
+  def three_box_per_day(self):
+    result = []
+    for user_no in range(10):
+      boxes = self.get_boxes_by_user(user_no)
+      wdays = []
+      for box in boxes:
+        wdays.append(box.split('_')[0])
+      wday_names = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']
+      for wday_name in wday_names:
+        if wdays.count(wday_name) == 3:
+          result.append(wday_name)
+    return result
 
 # 従業員定義
 
@@ -187,12 +234,12 @@ e9 = Employee(9, "小山", 30, True, ['thu_1', 'thu_2', 'thu_3',
 
 employees = [e0, e1, e2, e3, e4, e5, e6, e7, e8, e9]
 
-# 想定の人数が確保できているかどうかのスコア
-# 人数差分の絶対値なので、小さいほど優秀。そのため負の値を指定している。
-creator.create("FitnessPeopleCount", base.Fitness, weights=(-1000.0,))
+creator.create("FitnessPeopleCount", base.Fitness, weights=(-10.0, -100.0, -1.0, -100.0, -10.0))
 creator.create("Individual", list, fitness=creator.FitnessPeopleCount)
 
 toolbox = base.Toolbox()
+
+toolbox.register("map", futures.map)
 
 toolbox.register("attr_bool", random.randint, 0, 1)
 toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_bool, 210)
@@ -200,18 +247,42 @@ toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
 def evalShift(individual):
   s = Shift(individual)
-  sub_arr = s.abs_people_between_need_and_actual()
-  return (sum(sub_arr),)
+  s.employees = employees
+
+  # 想定人数とアサイン人数の差
+  people_count_sub_sum = sum(s.abs_people_between_need_and_actual()) / 210.0
+  # 応募していない時間帯へのアサイン数
+  not_applicated_count = s.not_applicated_assign() / 210.0
+  # アサイン数が応募数の半分以下の従業員数
+  few_work_user = len(s.few_work_user()) / 10.0
+  # 管理者が１人もいないコマ数
+  no_manager_box = len(s.no_manager_box()) / 21.0
+  # 朝・昼・夜の全部にアサインされている
+  three_box_per_day = len(s.three_box_per_day()) / 70.0
+  return (not_applicated_count, people_count_sub_sum, few_work_user, no_manager_box, three_box_per_day)
 
 toolbox.register("evaluate", evalShift)
+# 交叉関数を定義(二点交叉)
 toolbox.register("mate", tools.cxTwoPoint)
+#toolbox.register("mate", tools.cxSimulatedBinary, eta=0.01)
+
+# 変異関数を定義(ビット反転、変異隔離が5%ということ?)
 toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
+
+# 選択関数を定義(トーナメント選択、tournsizeはトーナメントの数？)
 toolbox.register("select", tools.selTournament, tournsize=3)
+#toolbox.register("select", tools.selRoulette)
+#toolbox.register("select", tools.sortNondominated)
+
+# The CMA-ES algorithm 
+#strategy = cma.Strategy(centroid=[5.0]*210, sigma=3.0, lambda_=20*210)
+#toolbox.register("generate", strategy.generate, creator.Individual)
+#toolbox.register("update", strategy.update)
 
 if __name__ == '__main__':
     # 初期集団を生成する
     pop = toolbox.population(n=300)
-    CXPB, MUTPB, NGEN = 0.5, 0.2, 100 # 交差確率、突然変異確率、進化計算のループ回数
+    CXPB, MUTPB, NGEN = 0.6, 0.5, 500 # 交差確率、突然変異確率、進化計算のループ回数
 
     print("進化開始")
 
@@ -268,17 +339,21 @@ if __name__ == '__main__':
         pop[:] = offspring
 
         # すべての個体の適合度を配列にする
-        fits = [ind.fitness.values[0] for ind in pop]
+        index = 1
+        for v in ind.fitness.values:
+          fits = [v for ind in pop]
 
-        length = len(pop)
-        mean = sum(fits) / length
-        sum2 = sum(x*x for x in fits)
-        std = abs(sum2 / length - mean**2)**0.5
+          length = len(pop)
+          mean = sum(fits) / length
+          sum2 = sum(x*x for x in fits)
+          std = abs(sum2 / length - mean**2)**0.5
 
-        print("  Min %s" % min(fits))
-        print("  Max %s" % max(fits))
-        print("  Avg %s" % mean)
-        print("  Std %s" % std)
+          print("* パラメータ%d") % index
+          print("  Min %s" % min(fits))
+          print("  Max %s" % max(fits))
+          print("  Avg %s" % mean)
+          print("  Std %s" % std)
+          index += 1
 
     print("-- 進化終了 --")
 
@@ -286,4 +361,4 @@ if __name__ == '__main__':
     print("最も優れていた個体: %s, %s" % (best_ind, best_ind.fitness.values))
     s = Shift(best_ind)
     s.print_csv()
-    print s.not_applicated_assign(employees)
+    s.print_tsv()
