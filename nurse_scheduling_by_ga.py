@@ -264,20 +264,12 @@ def evalShift(individual):
 toolbox.register("evaluate", evalShift)
 # 交叉関数を定義(二点交叉)
 toolbox.register("mate", tools.cxTwoPoint)
-#toolbox.register("mate", tools.cxSimulatedBinary, eta=0.01)
 
 # 変異関数を定義(ビット反転、変異隔離が5%ということ?)
 toolbox.register("mutate", tools.mutFlipBit, indpb=0.05)
 
 # 選択関数を定義(トーナメント選択、tournsizeはトーナメントの数？)
 toolbox.register("select", tools.selTournament, tournsize=3)
-#toolbox.register("select", tools.selRoulette)
-#toolbox.register("select", tools.sortNondominated)
-
-# The CMA-ES algorithm 
-#strategy = cma.Strategy(centroid=[5.0]*210, sigma=3.0, lambda_=20*210)
-#toolbox.register("generate", strategy.generate, creator.Individual)
-#toolbox.register("update", strategy.update)
 
 if __name__ == '__main__':
     # 初期集団を生成する
@@ -298,19 +290,15 @@ if __name__ == '__main__':
     for g in range(NGEN):
         print("-- %i 世代 --" % g)
 
-        ##############
         # 選択
-        ##############
-         # 次世代の個体群を選択
+        # 次世代の個体群を選択
         offspring = toolbox.select(pop, len(pop))
         # 個体群のクローンを生成
         offspring = list(map(toolbox.clone, offspring))
 
         # 選択した個体群に交差と突然変異を適応する
 
-        ##############
         # 交叉
-        ##############
         # 偶数番目と奇数番目の個体を取り出して交差
         for child1, child2 in zip(offspring[::2], offspring[1::2]):
             if random.random() < CXPB:
@@ -319,9 +307,7 @@ if __name__ == '__main__':
                 del child1.fitness.values
                 del child2.fitness.values
 
-        ##############
         # 変異
-        ##############
         for mutant in offspring:
             if random.random() < MUTPB:
                 toolbox.mutate(mutant)
